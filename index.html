@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111110">
+  <title>OBD2 Mechanic Dashboard</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15a8 8 0 1 1 16 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 15l4-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="15" r="1.6" fill="currentColor"/></svg>
+      <div><h1>OBD2 Mechanic Dashboard</h1><p id="conn-sub">Not connected</p></div>
+    </div>
+    <div class="controls">
+      <label class="field"><span>Source</span>
+        <select id="source">
+          <option value="sim">Simulator</option>
+          <option value="ble">Bluetooth ELM327</option>
+        </select>
+      </label>
+      <label class="field" id="scenario-field"><span>Scenario</span><select id="scenario"></select></label>
+      <button id="connect" class="btn primary">Connect</button>
+      <div class="seg" role="group" aria-label="Units">
+        <button data-units="metric" class="on">Metric</button><button data-units="imperial">Imperial</button>
+      </div>
+      <button id="theme" class="btn icon" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>
+    </div>
+  </header>
+
+  <section class="vehicle-strip" id="vehicle-strip">
+    <div><span>VIN</span><b id="vin">—</b></div>
+    <div><span>Protocol</span><b id="protocol">—</b></div>
+    <div><span>Adapter</span><b id="adapter">—</b></div>
+    <div><span>Check engine (MIL)</span><b id="mil">—</b></div>
+    <div><span>Run time</span><b id="runtime">—</b></div>
+    <div><span>Supported PIDs</span><b id="pidcount">—</b></div>
+  </section>
+
+  <main>
+    <section class="card span-all" aria-labelledby="alerts-h">
+      <div class="card-h"><h2 id="alerts-h">Mechanic alerts</h2><span class="muted" id="alerts-count"></span></div>
+      <ul class="alerts" id="alerts"><li class="alert info"><span class="ic">i</span><div><b>Waiting for data</b><p>Connect to the simulator or a Bluetooth adapter.</p></div></li></ul>
+    </section>
+
+    <section class="card span-all" aria-labelledby="gauges-h">
+      <div class="card-h"><h2 id="gauges-h">Primary gauges</h2></div>
+      <div class="gauges" id="gauges"></div>
+    </section>
+
+    <section class="card span-2" aria-labelledby="trends-h">
+      <div class="card-h"><h2 id="trends-h">Live trends <span class="muted">· last 60 s</span></h2>
+        <button class="btn small" id="export">Export CSV</button></div>
+      <div class="charts" id="charts"></div>
+    </section>
+
+    <section class="card" aria-labelledby="trims-h">
+      <div class="card-h"><h2 id="trims-h">Fuel trims</h2></div>
+      <div class="trims" id="trims"></div>
+      <p class="note">Positive = ECU adding fuel (lean condition). Negative = removing fuel (rich). Combined short + long beyond ±10% deserves a look; beyond ±20% usually sets a code.</p>
+    </section>
+
+    <section class="card span-2" aria-labelledby="engine-h">
+      <div class="card-h"><h2 id="engine-h">Engine &amp; sensor data</h2></div>
+      <div class="tiles" id="tiles"></div>
+    </section>
+
+    <section class="card" aria-labelledby="trip-h">
+      <div class="card-h"><h2 id="trip-h">Since codes cleared</h2></div>
+      <dl class="kv" id="trip"></dl>
+    </section>
+
+    <section class="card span-2" aria-labelledby="dtc-h">
+      <div class="card-h"><h2 id="dtc-h">Diagnostic trouble codes</h2>
+        <div class="btns"><button class="btn small" id="scan">Re-scan</button><button class="btn small danger" id="clear">Clear codes</button></div>
+      </div>
+      <div class="tabs" role="tablist" id="dtc-tabs">
+        <button role="tab" data-tab="stored" class="on">Stored <span class="badge" id="n-stored">0</span></button>
+        <button role="tab" data-tab="pending">Pending <span class="badge" id="n-pending">0</span></button>
+        <button role="tab" data-tab="permanent">Permanent <span class="badge" id="n-permanent">0</span></button>
+      </div>
+      <ul class="dtcs" id="dtcs"></ul>
+    </section>
+
+    <section class="card" aria-labelledby="ready-h">
+      <div class="card-h"><h2 id="ready-h">Readiness monitors</h2></div>
+      <div id="ready-summary" class="ready-summary"></div>
+      <ul class="monitors" id="monitors"></ul>
+    </section>
+
+    <section class="card" aria-labelledby="ff-h">
+      <div class="card-h"><h2 id="ff-h">Freeze frame</h2></div>
+      <div id="freeze"><p class="muted">No freeze frame stored.</p></div>
+    </section>
+
+    <section class="card span-2" aria-labelledby="log-h">
+      <details>
+        <summary><h2 id="log-h">Adapter log</h2><span class="muted">raw ELM327 traffic</span></summary>
+        <pre class="log" id="log"></pre>
+      </details>
+    </section>
+  </main>
+
+  <dialog id="clear-dialog">
+    <form method="dialog">
+      <h3>Clear trouble codes?</h3>
+      <p>This erases stored &amp; pending codes and freeze-frame data, and resets <b>all readiness monitors to incomplete</b>. The vehicle will not pass an emissions inspection until a full drive cycle is completed. Permanent codes stay until the ECU verifies the repair.</p>
+      <p class="muted">Ignition on, engine off is recommended.</p>
+      <div class="btns end"><button value="cancel" class="btn">Cancel</button><button value="ok" class="btn danger">Clear codes</button></div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/obd.js"></script>
+  <script src="js/dtc-db.js"></script>
+  <script src="js/elm.js"></script>
+  <script src="js/sim.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
