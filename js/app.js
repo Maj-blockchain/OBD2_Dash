@@ -122,19 +122,14 @@
       ['Fuel level', fmt('pct', latest.fuelLevel)], ['Fuel consumption', fmt('lph', latest.fuelRate)],
     ].map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('');
     $('runtime').textContent = fmt('sec', latest.runtime);
+    updateEvidence();
     renderAlerts();
   }
 
   function renderDiag() {
     const { dtcs, monitors, freeze } = diag;
     ['stored', 'pending', 'permanent'].forEach((t) => { $('n-' + t).textContent = dtcs[t].length; });
-    const list = dtcs[dtcTab];
-    $('dtcs').innerHTML = list.length ? list.map((c) => {
-      const d = OBD.describeDtc(c);
-      const label = { critical: 'Critical', serious: 'Fix soon', warning: 'Monitor' }[d.severity];
-      return `<li class="dtc"><span class="code">${d.code}</span><div><div class="desc">${d.description}</div><div class="sys">${d.system}${d.manufacturer ? ' · manufacturer specific' : ''}</div></div>
-        ${OBD.statusHtml(st(d.severity, label))}<div class="hint">${d.hint}</div></li>`;
-    }).join('') : `<li class="empty">No ${dtcTab} codes${connected ? '' : ' (not connected)'}</li>`;
+    renderDtcList();
 
     if (monitors) {
       $('mil').innerHTML = monitors.mil ? OBD.statusHtml(st('critical', `ON · ${monitors.dtcCount} code(s)`)) : OBD.statusHtml(st('good', 'Off'));
@@ -149,10 +144,165 @@
     }
 
     $('freeze').innerHTML = freeze
-      ? `<p>Captured when <b>${freeze.dtc}</b> was set — ${OBD.describeDtc(freeze.dtc).description}</p><table>${
+      ? `<p>Captured when <b>${freeze.dtc}</b> was set — ${OBD.describeDtc(freeze.dtc).title}</p><table>${
         Object.entries(freeze.values).map(([pid, v]) => `<tr><td>${PIDS[pid].label}</td><td>${fmt(PIDS[pid].kind, v)}</td></tr>`).join('')}</table>`
       : '<p class="muted">No freeze frame stored.</p>';
     renderAlerts();
+  }
+
+
+  // ---------- Trouble-code cards ----------
+  const SEV_LABEL = { critical: 'Critical', serious: 'Fix soon', warning: 'Monitor' };
+  const TAB_NOTE = {
+    stored: 'Confirmed faults: these turn on the check-engine light.',
+    pending: 'Detected once. If the fault is seen again on the next drive cycle it becomes a stored code and turns on the check-engine light. Fixing it now prevents that.',
+    permanent: 'Permanent codes cannot be erased with a scan tool. They clear themselves once the ECU re-tests the system and it passes, usually 1–3 drive cycles after the repair.',
+  };
+  const openCodes = new Set();
+  let dtcRenderKey = '';
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function renderDtcList(force) {
+    const { dtcs } = diag;
+    const list = dtcs[dtcTab];
+    const all = [...new Set([...dtcs.stored, ...dtcs.pending, ...dtcs.permanent])];
+    const key = [dtcTab, units, connected, list.join(), all.join()].join('|');
+    if (!force && key === dtcRenderKey) return updateEvidence();
+    dtcRenderKey = key;
+
+    // Where to start: repair order + cross-code insights
+    const ordered = OBD.repairOrder(all);
+    const insights = OBD.relatedInsights(all);
+    $('dtc-insights').hidden = !(insights.length || ordered.length > 1);
+    $('dtc-insights').innerHTML = `<h3>Where to start <span class="muted">· suggested repair order</span></h3>` +
+      (ordered.length > 1 ? `<ol class="order">${ordered.map((d) => `<li><b>${d.code}</b> ${esc(d.title)} <span class="muted">· ${OBD.DRIVE_ADVICE[d.drive].label}${d.root ? ' · likely root cause' : ''}</span></li>`).join('')}</ol>` : '') +
+      insights.map((i) => `<div class="insight ${i.level}"><span class="ic">${ICON[i.level]}</span><p>${i.text}</p></div>`).join('');
+
+    $('dtc-tabnote').textContent = list.length ? TAB_NOTE[dtcTab] : '';
+    if (!list.length) { $('dtcs').innerHTML = `<li class="empty">No ${dtcTab} codes${connected ? '' : ' (not connected)'}</li>`; return; }
+    if (!openCodes.size) openCodes.add(ordered[0] ? ordered[0].code : list[0]);
+
+    $('dtcs').innerHTML = list.map((c) => {
+      const d = OBD.describeDtc(c);
+      const drive = OBD.DRIVE_ADVICE[d.drive];
+      const where = ['stored', 'pending', 'permanent'].filter((t) => dtcs[t].includes(c)).map((t) => `<span class="chip">${t}</span>`).join('');
+      const q = encodeURIComponent(`${c} OBD2 code ${d.manufacturer ? '' : 'meaning fix'}`.trim());
+      return `<li class="dtc sev-${d.severity}"><details data-code="${c}"${openCodes.has(c) ? ' open' : ''}>
+        <summary><span class="code">${c}</span><div class="sum-main"><div class="desc">${esc(d.title)}</div><div class="sys">${esc(d.system)}${d.manufacturer ? ' · manufacturer specific' : ''} ${where}</div></div>
+          ${OBD.statusHtml(st(d.severity, SEV_LABEL[d.severity]))}</summary>
+        <div class="dtc-body">
+          <div class="drive ${drive.level}">${OBD.statusHtml(st(drive.level, drive.label))}<span>${drive.text}</span></div>
+          ${d.note ? `<p class="dtc-note">${esc(d.note)}</p>` : ''}
+          <p class="meaning">${esc(d.meaning)}</p>
+          ${d.live ? `<div class="evidence" data-live="${d.live}" data-bank="${d.bank || 1}" data-code="${c}"></div>` : ''}
+          <div class="dtc-cols">
+            ${d.causes.length ? `<div><h4>Likely causes <span class="muted">most common first</span></h4><ol class="causes">${d.causes.map((x) => `<li>${esc(x)}</li>`).join('')}</ol></div>` : ''}
+            <div><h4>Recommended steps</h4><ol class="steps">${d.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol></div>
+          </div>
+          ${d.symptoms.length ? `<p class="symptoms"><b>Typical symptoms:</b> ${d.symptoms.map(esc).join(' · ')}</p>` : ''}
+          <div class="dtc-foot"><span>DIY difficulty: <b>${esc(d.diy)}</b></span>
+            <a href="https://www.google.com/search?q=${q}" target="_blank" rel="noopener">Search this code online ↗</a></div>
+        </div></details></li>`;
+    }).join('');
+    $('dtcs').querySelectorAll('details').forEach((el) => el.addEventListener('toggle', () => {
+      el.open ? openCodes.add(el.dataset.code) : openCodes.delete(el.dataset.code);
+      if (el.open) updateEvidence();
+    }));
+    updateEvidence();
+  }
+
+  function stats(key, ms = 10000) {
+    const now = performance.now(), pts = (history[key] || []).filter((p) => p.t > now - ms);
+    if (pts.length < 6) return null;
+    const vs = pts.map((p) => p.v), mean = vs.reduce((a, b) => a + b, 0) / vs.length;
+    let crossings = 0;
+    for (let i = 1; i < vs.length; i++) if ((vs[i - 1] - 0.45) * (vs[i] - 0.45) < 0) crossings++;
+    return { min: Math.min(...vs), max: Math.max(...vs), range: Math.max(...vs) - Math.min(...vs), mean, sd: Math.sqrt(vs.reduce((a, v) => a + (v - mean) ** 2, 0) / vs.length), crossings };
+  }
+
+  /** Live-data checks that help confirm or rule out a code. Returns {level, html} or null. */
+  const EVIDENCE = {
+    trims(code, bank) {
+      const s = latest['stft' + bank], l = latest['ltft' + bank];
+      if (s == null || l == null) return null;
+      const total = s + l, isLean = /P017[14]/.test(code);
+      const now = `Bank ${bank} now: short ${fmt('trim', s)}, long ${fmt('trim', l)}, <b>total ${fmt('trim', total)}</b> at ${fmt('rpm', latest.rpm)}.`;
+      if ((latest.coolant || 0) < 70) return { level: 'info', html: `${now} The engine is still warming up, so trims are not reliable yet. Re-check when the coolant is above ${fmt('temp', 80)}.` };
+      if (isLean ? total >= 10 : total <= -10) return { level: 'serious', html: `${now} <b>Confirms the fault:</b> the ECU is ${isLean ? 'adding' : 'removing'} ${Math.abs(total).toFixed(0)}% fuel. ${isLean ? 'Now hold 2,500 rpm: if the total drops towards 0%, suspect a vacuum leak; if it stays high or rises, suspect fuel delivery or the MAF.' : ''}` };
+      if (isLean ? total <= -10 : total >= 10) return { level: 'warning', html: `${now} The trims currently show the <b>opposite</b> condition. Check for a recent repair, or for a faulty O2 sensor.` };
+      return { level: 'good', html: `${now} <b>Currently within normal range (±10%).</b> The fault may be intermittent or only under load. Re-check at idle and at 2,500 rpm, and after a cold start.` };
+    },
+    misfire() {
+      const r = stats('rpm');
+      if (!r) return null;
+      const idle = (latest.speed || 0) < 1 && r.mean < 1300;
+      const trims = (latest.stft1 ?? 0) + (latest.ltft1 ?? 0);
+      const lean = trims >= 10 ? ` Fuel trims are lean (${fmt('trim', trims)}). A lean mixture can cause misfires: fix that first.` : '';
+      if (!idle) return { level: 'info', html: `Let the engine idle in Park/Neutral to judge idle smoothness (now ${fmt('rpm', r.mean)}, ${fmt('speed', latest.speed)}).${lean}` };
+      return r.sd > 35
+        ? { level: 'serious', html: `<b>Idle is unstable:</b> RPM varies ±${r.sd.toFixed(0)} rpm (${r.min.toFixed(0)}–${r.max.toFixed(0)}), consistent with a misfire.${lean}` }
+        : { level: 'good', html: `Idle is steady right now (±${r.sd.toFixed(0)} rpm). The misfire may only occur under load or when cold.${lean}` };
+    },
+    cat() {
+      const a = stats('o2b1s1'), b = stats('o2b1s2');
+      if (!a || !b) return null;
+      if ((latest.coolant || 0) < 70) return { level: 'info', html: 'Warm the engine fully to judge the catalyst from the O2 sensors.' };
+      const ratio = b.range / Math.max(a.range, 0.01);
+      return ratio > 0.6
+        ? { level: 'serious', html: `<b>Downstream O2 mirrors upstream</b> (swing ${b.range.toFixed(2)} V vs ${a.range.toFixed(2)} V). Confirms the catalyst is not storing oxygen.` }
+        : { level: 'good', html: `Downstream O2 is steady (swing ${b.range.toFixed(2)} V, average ${b.mean.toFixed(2)} V) while upstream switches (${a.range.toFixed(2)} V). The catalyst looks healthy right now, so check for an exhaust leak or an intermittent fault.` };
+    },
+    o2() {
+      const a = stats('o2b1s1');
+      if (!a) return null;
+      if ((latest.coolant || 0) < 70) return { level: 'info', html: 'The engine is not warm yet; the O2 sensor is not in closed-loop control.' };
+      return a.range < 0.4 || a.crossings < 4
+        ? { level: 'serious', html: `<b>Upstream O2 is lazy:</b> swing ${a.range.toFixed(2)} V and ${a.crossings} switches in 10 s (expect 0.1–0.9 V and several switches).` }
+        : { level: 'good', html: `Upstream O2 is switching normally right now (${a.min.toFixed(2)}–${a.max.toFixed(2)} V, ${a.crossings} switches in 10 s).` };
+    },
+    coolant() {
+      if (latest.coolant == null) return null;
+      const c = latest.coolant, oil = latest.oilTemp != null ? `, oil ${fmt('temp', latest.oilTemp)}` : '';
+      if (c <= -35) return { level: 'serious', html: `Coolant reads ${fmt('temp', c)}: <b>that is an open circuit</b> (sensor unplugged or broken wire).` };
+      if (c >= 125) return { level: 'critical', html: `Coolant reads ${fmt('temp', c)}${oil}. That is either genuine severe overheating or a shorted sensor. Feel the upper radiator hose carefully to tell which.` };
+      if (c >= 108) return { level: 'critical', html: `Coolant ${fmt('temp', c)}${oil}: <b>the engine is overheating now.</b> Switch off and let it cool.` };
+      return { level: 'good', html: `Coolant ${fmt('temp', c)}${oil}: currently within normal range.` };
+    },
+    warmup() {
+      if (latest.coolant == null) return null;
+      const mins = (latest.runtime || 0) / 60;
+      if (mins < 10) return { level: 'info', html: `Coolant ${fmt('temp', latest.coolant)} after ${mins.toFixed(0)} min of running. Watch it for 10–15 minutes of driving: it should reach ${fmt('temp', 85)}–${fmt('temp', 95)}.` };
+      return latest.coolant < 75
+        ? { level: 'serious', html: `Only ${fmt('temp', latest.coolant)} after ${mins.toFixed(0)} min. <b>Confirms the thermostat is stuck open</b> (or the sensor is faulty).` }
+        : { level: 'good', html: `Coolant reached ${fmt('temp', latest.coolant)}. The warm-up looks normal now; the fault may only show in cold weather or at highway speed.` };
+    },
+    voltage() {
+      if (latest.voltage == null) return null;
+      const v = latest.voltage, run = running();
+      const verdict = run
+        ? (v < 13.3 ? { level: 'serious', t: '<b>Not charging properly</b> (expect 13.5–14.7 V with the engine running).' }
+          : v > 14.9 ? { level: 'serious', t: '<b>Overcharging.</b> Confirm with a multimeter at the battery; adapters can read a few tenths high.' }
+          : { level: 'good', t: 'Charging voltage is normal right now.' })
+        : (v < 12.4 ? { level: 'warning', t: 'Battery is partly discharged (a healthy battery rests at about 12.6 V).' } : { level: 'good', t: 'Battery voltage is fine. Start the engine to check charging.' });
+      return { level: verdict.level, html: `System voltage ${fmt('volt', v)} with the engine ${run ? 'running' : 'off'}. ${verdict.t}` };
+    },
+    maf() {
+      if (latest.maf == null) return null;
+      const idle = (latest.speed || 0) < 1 && (latest.rpm || 0) < 1100;
+      return { level: 'info', html: `MAF ${fmt('flow', latest.maf)} at ${fmt('rpm', latest.rpm)}. ${idle ? 'At warm idle, expect roughly 1–1.5 g/s per litre of engine size (e.g. 2.0 L ≈ 2–3 g/s). Much lower suggests a dirty sensor or an air leak after it.' : 'Check at warm idle for the most reliable comparison.'}` };
+    },
+    evap() {
+      return { level: 'info', html: 'EVAP faults cannot be seen in live data. Check the fuel cap first, then smoke-test the system.' };
+    },
+  };
+
+  function updateEvidence() {
+    document.querySelectorAll('#dtcs details[open] .evidence').forEach((el) => {
+      const fn = EVIDENCE[el.dataset.live];
+      const r = fn && (connected || Object.keys(latest).length) ? fn(el.dataset.code, +el.dataset.bank) : null;
+      el.className = 'evidence ' + (r ? r.level : 'info');
+      el.innerHTML = `<h4>Live data check</h4><p>${r ? r.html : 'Connect to the vehicle with the engine running to check this against live data.'}</p>`;
+    });
   }
 
   function rangeOver(key, ms) {
@@ -377,7 +527,7 @@
       const b = e.target.closest('[data-tab]'); if (!b) return;
       dtcTab = b.dataset.tab;
       document.querySelectorAll('#dtc-tabs [data-tab]').forEach((x) => x.classList.toggle('on', x === b));
-      renderDiag();
+      renderDtcList(true);
     };
     $('scan').onclick = () => (client && connected ? refreshDiagnostics().then(() => toast('Codes re-scanned')) : toast('Not connected'));
     $('clear').onclick = () => (client && connected ? $('clear-dialog').showModal() : toast('Not connected'));
