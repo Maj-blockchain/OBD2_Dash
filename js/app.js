@@ -165,7 +165,7 @@
   function computeAlerts() {
     if (!connected && !Object.keys(latest).length) return [{ level: 'info', title: 'Waiting for data', text: 'Connect to the simulator or a Bluetooth adapter.' }];
     const out = [];
-    if (connected && client && !client.ecuOk) out.push({ level: 'critical', title: 'Vehicle ECU is not responding', text: `The adapter answered "${client.lastError}". Turn the ignition ON (or start the engine), check the adapter is fully seated in the OBD2 port, then Disconnect and Connect again.` });
+    if (connected && client && !client.ecuOk) out.push({ level: 'critical', title: 'Vehicle ECU is not responding', text: `The adapter answered "${client.lastError}". All protocols were tried; the app keeps retrying every few seconds. Check the ignition is ON (or start the engine) and the adapter is fully seated in the OBD2 port.` });
     if (connected && client && client.ecuOk && performance.now() - connectedAt > 6000 && latest.rpm == null && latest.coolant == null)
       out.push({ level: 'critical', title: 'No live data received', text: 'The adapter is connected but sensor requests return no data. Open the Adapter log below, tap Copy log and share it.' });
     const m = diag.monitors;
@@ -250,6 +250,11 @@
           for (const pid of SLOW) if (client.has(pid)) record(PIDS[pid].key, await client.readPid(pid));
           if (!client.has('42')) record('voltage', await client.readBatteryVoltage());
         }
+        if (!client.ecuOk && cycle % 8 === 4 && await client.retryEcu()) {
+          $('protocol').textContent = client.protocol; $('pidcount').textContent = client.supported.size;
+          localStorage.setItem('obd-proto-' + (transport.name || 'ble'), client.protocolNum);
+          toast('Vehicle ECU is now responding');
+        }
         if (cycle % 20 === 10) await refreshDiagnostics();
         csvRows.push({ time: new Date().toISOString(), ...latest });
         if (csvRows.length > 20000) csvRows.shift();
@@ -281,7 +286,12 @@
       await transport.connect();
       logLines.length = 0;
       client = new OBD.ElmClient(transport, log);
-      const info = await client.init();
+      const protoKey = 'obd-proto-' + (transport.name || src);
+      const info = await client.init({
+        savedProto: src === 'ble' ? localStorage.getItem(protoKey) : null,
+        onProgress: (t) => { setConn('connecting', t); log('info', t); },
+      });
+      if (client.ecuOk && client.protocolNum && client.protocolNum !== '0') localStorage.setItem(protoKey, client.protocolNum);
       $('adapter').textContent = `${info.adapter}${src === 'ble' ? ' · ' + transport.name : ''}`;
       $('protocol').textContent = info.protocol;
       $('pidcount').textContent = client.supported.size;
@@ -291,6 +301,7 @@
       if (transport.info) log('rx', 'BLE ' + transport.info);
       if (!client.ecuOk) toast('Vehicle ECU did not respond - is the ignition on?');
       $('pidcount').textContent = client.supportedGuessed ? 'ECU not responding' : client.supported.size;
+      log('info', client.ecuOk ? `Connected: ${client.protocol}, ${client.supported.size} PIDs` : `ECU silent (${client.lastError}) - will keep retrying`);
       setConn('live', `Live · ${src === 'sim' ? 'Simulator' : transport.name}`);
       await refreshDiagnostics();
       pollLoop(++loopToken);
@@ -314,7 +325,7 @@
   // ---------- Log / toast / export ----------
   const logLines = [];
   function log(dir, text) {
-    logLines.push(`${new Date().toLocaleTimeString()} ${dir === 'tx' ? '→' : '←'} ${text}`);
+    logLines.push(`${new Date().toLocaleTimeString()} ${dir === 'tx' ? '→' : dir === 'rx' ? '←' : '•'} ${text}`);
     if (logLines.length > 400) logLines.splice(60, logLines.length - 400); // keep the first 60 lines (connection handshake)
     const el = $('log');
     if (el.closest('details').open) { el.textContent = logLines.join('\n'); el.scrollTop = el.scrollHeight; }
@@ -343,7 +354,10 @@
     buildUi();
 
     $('connect').onclick = () => (transport ? disconnect() : connect());
+    $('source').value = localStorage.getItem('obd-source') || 'sim';
+    $('scenario-field').hidden = $('source').value !== 'sim';
     $('source').onchange = () => {
+      localStorage.setItem('obd-source', $('source').value);
       $('scenario-field').hidden = $('source').value !== 'sim';
       if ($('source').value === 'ble' && !OBD.BleElmTransport.supported())
         toast('Web Bluetooth needs Chrome/Edge (Android, desktop) over https:// or localhost. iOS Safari does not support it.');
@@ -383,7 +397,8 @@
     $('log').closest('details').addEventListener('toggle', () => { $('log').textContent = logLines.join('\n'); });
     let rT; addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(renderLive, 100); });
 
-    connect(); // start the simulator so the dashboard is populated immediately
+    if ($('source').value === 'sim') connect(); // demo data straight away; Bluetooth needs a tap (browser rule)
+    else toast('Tap Connect to pair with your Bluetooth adapter');
   }
 
   document.addEventListener('DOMContentLoaded', init);

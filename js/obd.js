@@ -102,14 +102,18 @@
     return [(letter << 6) | (parseInt(d[0], 16) << 4) | parseInt(d[1], 16), parseInt(d.slice(2), 16)];
   }
 
-  /** Mode 03 / 07 / 0A response -> ["P0171", ...]. Handles CAN (count byte) and legacy formats. */
+  /** Mode 03 / 07 / 0A response -> ["P0171", ...], or null when the adapter got no valid reply.
+      Each line is one ECU's answer (CAN: count byte + pairs; legacy: 3 pairs per line). */
   function decodeDtcList(raw, respMode) {
-    const hex = payload(raw);
-    if (hex === null) return [];
+    const lines = cleanLines(raw);
+    if (!lines.length || lines.some((l) => ERROR_RE.test(l))) return null;
+    const multiFrame = lines.some((l) => /^[0-9A-F]:/i.test(l));
+    const chunks = multiFrame ? [payload(raw)] : lines.map((l) => l.replace(/\s/g, '').toUpperCase());
     const codes = [];
-    // Legacy protocols repeat the mode byte per line; split on it.
-    const chunks = hex.split(new RegExp('(?=' + respMode + ')')).filter((c) => c.startsWith(respMode));
+    let valid = false;
     for (const chunk of chunks) {
+      if (!chunk || !chunk.startsWith(respMode)) continue;
+      valid = true;
       let data = bytesFrom(chunk.slice(2));
       if (data.length % 2 === 1) data = data.slice(1); // CAN: leading DTC count byte
       for (let i = 0; i + 1 < data.length; i += 2) {
@@ -117,7 +121,7 @@
         codes.push(decodeDtc(data[i], data[i + 1]));
       }
     }
-    return [...new Set(codes)];
+    return valid ? [...new Set(codes)] : null;
   }
 
   // ---------- Monitor status (PID 01) ----------
@@ -159,7 +163,7 @@
   }
 
   Object.assign(OBD, {
-    PIDS, KEY_TO_PID, payload, after, bytesFrom, cleanLines, decodePid, decodeSupported,
+    PROTOCOL_NAMES: PROTOCOLS, PIDS, KEY_TO_PID, payload, after, bytesFrom, cleanLines, decodePid, decodeSupported,
     decodeDtc, encodeDtc, decodeDtcList, decodeMonitorStatus, decodeVin, decodeProtocol,
   });
 })(window.OBD = window.OBD || {});
