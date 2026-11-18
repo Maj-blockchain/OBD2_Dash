@@ -30,7 +30,7 @@
         const chars = await svc.getCharacteristics();
         this.tx = chars.find((c) => c.properties.write || c.properties.writeWithoutResponse);
         this.rx = chars.find((c) => c.properties.notify || c.properties.indicate);
-        if (this.tx && this.rx) break;
+        if (this.tx && this.rx) { this.serviceUuid = uuid; break; }
       }
       if (!this.tx || !this.rx) throw new Error('No ELM327 serial characteristic found on this device.');
       this.decoder = new TextDecoder();
@@ -47,6 +47,7 @@
         }
       });
       await this.rx.startNotifications();
+      this.info = `service ${this.serviceUuid.slice(4, 8)} · write ${this.tx.uuid.slice(4, 8)}${this.tx.properties.writeWithoutResponse ? ' (no-resp)' : ''} · notify ${this.rx.uuid.slice(4, 8)}`;
     }
 
     send(cmd, timeoutMs = 5000) {
@@ -87,7 +88,13 @@
     async init() {
       const id = OBD.cleanLines(await this.cmd('ATZ', 8000)).pop() || 'ELM327';
       for (const c of ['ATE0', 'ATL0', 'ATS1', 'ATH0', 'ATAT1', 'ATSP0']) await this.cmd(c);
-      await this.cmd('0100', 15000); // triggers protocol search
+      // First OBD request triggers the protocol search; some ECUs need a few attempts.
+      this.ecuOk = false;
+      for (let i = 0; i < 3 && !this.ecuOk; i++) {
+        const r = await this.cmd('0100', 15000);
+        this.ecuOk = OBD.decodeSupported('00', r).length > 0;
+        if (!this.ecuOk) { this.lastError = OBD.cleanLines(r).join(' ') || 'no response'; await new Promise((res) => setTimeout(res, 1000)); }
+      }
       this.adapter = id;
       this.protocol = OBD.decodeProtocol(await this.cmd('ATDPN'));
       await this.loadSupported();
@@ -96,6 +103,11 @@
 
     async loadSupported() {
       this.supported.clear();
+      if (!this.ecuOk) { // ECU didn't report support: poll the common PIDs anyway and let NO DATA filter them
+        Object.keys(OBD.PIDS).forEach((p) => this.supported.add(p));
+        this.supportedGuessed = true;
+        return;
+      }
       for (const base of ['00', '20', '40', '60']) {
         const list = OBD.decodeSupported(base, await this.cmd('01' + base));
         list.forEach((p) => this.supported.add(p));

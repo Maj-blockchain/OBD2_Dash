@@ -49,7 +49,7 @@
   const statusFor = (key) => RULES[key] && latest[key] != null ? RULES[key](latest[key]) : null;
 
   // ---------- State ----------
-  let transport = null, client = null, connected = false, loopToken = 0;
+  let transport = null, client = null, connected = false, loopToken = 0, connectedAt = 0;
   let latest = {}, history = {}, csvRows = [], diag = { dtcs: { stored: [], pending: [], permanent: [] }, monitors: null, freeze: null };
   let dtcTab = 'stored';
   const HISTORY_MS = 65000;
@@ -165,6 +165,9 @@
   function computeAlerts() {
     if (!connected && !Object.keys(latest).length) return [{ level: 'info', title: 'Waiting for data', text: 'Connect to the simulator or a Bluetooth adapter.' }];
     const out = [];
+    if (connected && client && !client.ecuOk) out.push({ level: 'critical', title: 'Vehicle ECU is not responding', text: `The adapter answered "${client.lastError}". Turn the ignition ON (or start the engine), check the adapter is fully seated in the OBD2 port, then Disconnect and Connect again.` });
+    if (connected && client && client.ecuOk && performance.now() - connectedAt > 6000 && latest.rpm == null && latest.coolant == null)
+      out.push({ level: 'critical', title: 'No live data received', text: 'The adapter is connected but sensor requests return no data. Open the Adapter log below, tap Copy log and share it.' });
     const m = diag.monitors;
     if (m && m.mil) out.push({ level: 'critical', title: 'Check engine light is ON', text: `${diag.dtcs.stored.join(', ') || m.dtcCount + ' stored code(s)'} — see trouble codes below.` });
     if (diag.dtcs.pending.length) out.push({ level: 'warning', title: 'Pending trouble codes', text: `${diag.dtcs.pending.join(', ')} detected once; will set the MIL if seen again.` });
@@ -276,6 +279,7 @@
     setConn('connecting', src === 'sim' ? 'Starting simulator…' : 'Pairing with adapter…');
     try {
       await transport.connect();
+      logLines.length = 0;
       client = new OBD.ElmClient(transport, log);
       const info = await client.init();
       $('adapter').textContent = `${info.adapter}${src === 'ble' ? ' · ' + transport.name : ''}`;
@@ -283,7 +287,10 @@
       $('pidcount').textContent = client.supported.size;
       $('vin').textContent = (await client.readVin()) || 'Not reported';
       latest = {}; history = {}; csvRows = [];
-      connected = true;
+      connected = true; connectedAt = performance.now();
+      if (transport.info) log('rx', 'BLE ' + transport.info);
+      if (!client.ecuOk) toast('Vehicle ECU did not respond - is the ignition on?');
+      $('pidcount').textContent = client.supportedGuessed ? 'ECU not responding' : client.supported.size;
       setConn('live', `Live · ${src === 'sim' ? 'Simulator' : transport.name}`);
       await refreshDiagnostics();
       pollLoop(++loopToken);
@@ -308,7 +315,7 @@
   const logLines = [];
   function log(dir, text) {
     logLines.push(`${new Date().toLocaleTimeString()} ${dir === 'tx' ? '→' : '←'} ${text}`);
-    if (logLines.length > 300) logLines.splice(0, logLines.length - 300);
+    if (logLines.length > 400) logLines.splice(60, logLines.length - 400); // keep the first 60 lines (connection handshake)
     const el = $('log');
     if (el.closest('details').open) { el.textContent = logLines.join('\n'); el.scrollTop = el.scrollHeight; }
   }
@@ -367,6 +374,12 @@
       await refreshDiagnostics();
     });
     $('export').onclick = exportCsv;
+    $('copy-log').onclick = async (e) => {
+      e.preventDefault();
+      const text = logLines.join('\n') || '(log is empty)';
+      try { await navigator.clipboard.writeText(text); toast('Log copied - paste it into the chat'); }
+      catch { $('log').textContent = text; getSelection().selectAllChildren($('log')); toast('Select-all done - copy with Ctrl/Cmd+C'); }
+    };
     $('log').closest('details').addEventListener('toggle', () => { $('log').textContent = logLines.join('\n'); });
     let rT; addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(renderLive, 100); });
 
