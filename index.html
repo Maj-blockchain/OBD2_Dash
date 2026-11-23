@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#111110">
   <title>OBD2 Mechanic Dashboard</title>
-  <link rel="stylesheet" href="css/styles.css?v=4">
+  <link rel="stylesheet" href="css/styles.css?v=5">
 </head>
 <body>
   <header class="topbar">
@@ -14,71 +14,87 @@
       <div><h1>OBD2 Mechanic Dashboard</h1><p id="conn-sub">Not connected</p></div>
     </div>
     <div class="controls">
-      <label class="field"><span>Source</span>
+      <label class="field"><span data-i18n="Source">Source</span>
         <select id="source">
           <option value="sim">Simulator</option>
           <option value="ble">Bluetooth ELM327</option>
         </select>
       </label>
-      <label class="field" id="scenario-field"><span>Scenario</span><select id="scenario"></select></label>
+      <label class="field" id="scenario-field"><span data-i18n="Scenario">Scenario</span><select id="scenario"></select></label>
       <button id="connect" class="btn primary">Connect</button>
       <div class="seg" role="group" aria-label="Units">
         <button data-units="metric" class="on">Metric</button><button data-units="imperial">Imperial</button>
       </div>
+      <label class="field"><span data-i18n="Language">Language</span>
+        <select id="lang">
+          <option value="en">English</option><option value="fr">Français</option><option value="de">Deutsch</option>
+          <option value="es">Español</option><option value="pt">Português</option><option value="it">Italiano</option>
+        </select>
+      </label>
       <button id="theme" class="btn icon" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>
     </div>
   </header>
 
   <section class="vehicle-strip" id="vehicle-strip">
     <div><span>VIN</span><b id="vin">—</b></div>
-    <div><span>Protocol</span><b id="protocol">—</b></div>
-    <div><span>Adapter</span><b id="adapter">—</b></div>
-    <div><span>Check engine (MIL)</span><b id="mil">—</b></div>
-    <div><span>Run time</span><b id="runtime">—</b></div>
-    <div><span>Supported PIDs</span><b id="pidcount">—</b></div>
+    <div><span data-i18n="Vehicle">Vehicle</span><b id="make">—</b></div>
+    <div><span data-i18n="Protocol">Protocol</span><b id="protocol">—</b></div>
+    <div><span data-i18n="Adapter">Adapter</span><b id="adapter">—</b></div>
+    <div><span data-i18n="Check engine (MIL)">Check engine (MIL)</span><b id="mil">—</b></div>
+    <div><span data-i18n="Run time">Run time</span><b id="runtime">—</b></div>
+    <div><span data-i18n="Supported PIDs">Supported PIDs</span><b id="pidcount">—</b></div>
   </section>
 
-  <main>
+  <nav class="views" id="views" role="tablist" aria-label="Sections">
+    <button role="tab" data-view="dash" data-i18n="Dashboard">Dashboard</button>
+    <button role="tab" data-view="live" data-i18n="Live data">Live data</button>
+    <button role="tab" data-view="systems" data-i18n="Full system scan">Full system scan</button>
+    <button role="tab" data-view="service" data-i18n="Service resets">Service resets</button>
+    <button role="tab" data-view="smog" data-i18n="Smog / MOT check">Smog / MOT check</button>
+    <button role="tab" data-view="report" data-i18n="Vehicle &amp; report">Vehicle &amp; report</button>
+  </nav>
+
+  <main data-view-panel="dash">
     <section class="card span-all" aria-labelledby="alerts-h">
-      <div class="card-h"><h2 id="alerts-h">Mechanic alerts</h2><span class="muted" id="alerts-count"></span></div>
+      <div class="card-h"><h2 id="alerts-h" data-i18n="Mechanic alerts">Mechanic alerts</h2><span class="muted" id="alerts-count"></span></div>
       <ul class="alerts" id="alerts"><li class="alert info"><span class="ic">i</span><div><b>Waiting for data</b><p>Connect to the simulator or a Bluetooth adapter.</p></div></li></ul>
     </section>
 
     <section class="card span-all" aria-labelledby="gauges-h">
-      <div class="card-h"><h2 id="gauges-h">Primary gauges</h2></div>
+      <div class="card-h"><h2 id="gauges-h" data-i18n="Primary gauges">Primary gauges</h2></div>
       <div class="gauges" id="gauges"></div>
     </section>
 
     <section class="card span-2" aria-labelledby="trends-h">
-      <div class="card-h"><h2 id="trends-h">Live trends <span class="muted">· last 60 s</span></h2>
-        <button class="btn small" id="export">Export CSV</button></div>
+      <div class="card-h"><h2 id="trends-h"><span data-i18n="Live trends">Live trends</span> <span class="muted">· last 60 s</span></h2>
+        <button class="btn small" id="export" data-i18n="Export CSV">Export CSV</button></div>
       <div class="charts" id="charts"></div>
     </section>
 
     <section class="card" aria-labelledby="trims-h">
-      <div class="card-h"><h2 id="trims-h">Fuel trims</h2></div>
+      <div class="card-h"><h2 id="trims-h" data-i18n="Fuel trims">Fuel trims</h2></div>
       <div class="trims" id="trims"></div>
       <p class="note">Positive = ECU adding fuel (lean condition). Negative = removing fuel (rich). Combined short + long beyond ±10% deserves a look; beyond ±20% usually sets a code.</p>
     </section>
 
     <section class="card span-2" aria-labelledby="engine-h">
-      <div class="card-h"><h2 id="engine-h">Engine &amp; sensor data</h2></div>
+      <div class="card-h"><h2 id="engine-h" data-i18n="Engine &amp; sensor data">Engine &amp; sensor data</h2></div>
       <div class="tiles" id="tiles"></div>
     </section>
 
     <section class="card" aria-labelledby="trip-h">
-      <div class="card-h"><h2 id="trip-h">Since codes cleared</h2></div>
+      <div class="card-h"><h2 id="trip-h" data-i18n="Since codes cleared">Since codes cleared</h2></div>
       <dl class="kv" id="trip"></dl>
     </section>
 
     <section class="card span-2" aria-labelledby="dtc-h">
-      <div class="card-h"><h2 id="dtc-h">Diagnostic trouble codes</h2>
-        <div class="btns"><button class="btn small" id="scan">Re-scan</button><button class="btn small danger" id="clear">Clear codes</button></div>
+      <div class="card-h"><h2 id="dtc-h" data-i18n="Diagnostic trouble codes">Diagnostic trouble codes</h2>
+        <div class="btns"><button class="btn small" id="scan" data-i18n="Re-scan">Re-scan</button><button class="btn small danger" id="clear" data-i18n="Clear codes">Clear codes</button></div>
       </div>
       <div class="tabs" role="tablist" id="dtc-tabs">
-        <button role="tab" data-tab="stored" class="on">Stored <span class="badge" id="n-stored">0</span></button>
-        <button role="tab" data-tab="pending">Pending <span class="badge" id="n-pending">0</span></button>
-        <button role="tab" data-tab="permanent">Permanent <span class="badge" id="n-permanent">0</span></button>
+        <button role="tab" data-tab="stored" class="on"><span data-i18n="Stored">Stored</span> <span class="badge" id="n-stored">0</span></button>
+        <button role="tab" data-tab="pending"><span data-i18n="Pending">Pending</span> <span class="badge" id="n-pending">0</span></button>
+        <button role="tab" data-tab="permanent"><span data-i18n="Permanent">Permanent</span> <span class="badge" id="n-permanent">0</span></button>
       </div>
       <div class="dtc-insights" id="dtc-insights" hidden></div>
       <p class="tabnote" id="dtc-tabnote"></p>
@@ -86,23 +102,102 @@
     </section>
 
     <section class="card" aria-labelledby="ready-h">
-      <div class="card-h"><h2 id="ready-h">Readiness monitors</h2></div>
+      <div class="card-h"><h2 id="ready-h" data-i18n="Readiness monitors">Readiness monitors</h2></div>
       <div id="ready-summary" class="ready-summary"></div>
       <ul class="monitors" id="monitors"></ul>
     </section>
 
     <section class="card" aria-labelledby="ff-h">
-      <div class="card-h"><h2 id="ff-h">Freeze frame</h2></div>
+      <div class="card-h"><h2 id="ff-h" data-i18n="Freeze frame">Freeze frame</h2></div>
       <div id="freeze"><p class="muted">No freeze frame stored.</p></div>
     </section>
 
     <section class="card span-2" aria-labelledby="log-h">
       <details>
-        <summary><h2 id="log-h">Adapter log</h2><span class="muted">raw ELM327 traffic</span><button class="btn small" id="copy-log" style="margin-left:auto">Copy log</button></summary>
+        <summary><h2 id="log-h" data-i18n="Adapter log">Adapter log</h2><span class="muted">raw ELM327 traffic</span><button class="btn small" id="copy-log" style="margin-left:auto">Copy log</button></summary>
         <pre class="log" id="log"></pre>
       </details>
     </section>
   </main>
+
+  <!-- Live data: every supported sensor, with custom graphs -->
+  <main data-view-panel="live" hidden>
+    <section class="card span-all">
+      <div class="card-h"><h2 data-i18n="Custom graphs">Custom graphs</h2>
+        <div class="btns"><button class="btn small" id="live-pause" data-i18n="Pause">Pause</button><button class="btn small" id="live-clear-graphs" data-i18n="Clear graphs">Clear graphs</button><button class="btn small" id="live-export" data-i18n="Export CSV">Export CSV</button></div></div>
+      <div class="charts" id="live-charts"></div>
+      <p class="note" id="live-charts-empty" data-i18n="Tick “Graph” next to any sensor below to plot it here (up to 6). Graphed sensors are read every cycle.">Tick “Graph” next to any sensor below to plot it here (up to 6). Graphed sensors are read every cycle.</p>
+    </section>
+    <section class="card span-all">
+      <div class="card-h"><h2 data-i18n="All sensors">All sensors</h2><input id="live-filter" class="input" type="search" placeholder="Filter…" aria-label="Filter sensors"></div>
+      <div class="table-wrap"><table class="live-table"><thead><tr><th data-i18n="Sensor">Sensor</th><th class="num" data-i18n="Value">Value</th><th class="num">Min</th><th class="num">Max</th><th data-i18n="Unit">Unit</th><th data-i18n="Graph">Graph</th></tr></thead><tbody id="live-rows"></tbody></table></div>
+    </section>
+  </main>
+
+  <!-- Full system diagnosis: every module over UDS -->
+  <main data-view-panel="systems" hidden>
+    <section class="card span-all">
+      <div class="card-h"><h2 data-i18n="Full system scan">Full system scan</h2>
+        <div class="btns"><button class="btn small primary" id="sys-quick" data-i18n="Scan modules">Scan modules</button><button class="btn small" id="sys-deep" data-i18n="Deep scan (find all modules)">Deep scan (find all modules)</button><button class="btn small danger" id="sys-clear" data-i18n="Clear all codes">Clear all codes</button></div></div>
+      <label class="check"><input type="checkbox" id="sys-auto"> <span data-i18n="AutoVIN &amp; scan: read the VIN and scan all known modules every time you connect">AutoVIN &amp; scan: read the VIN and scan all known modules every time you connect</span></label>
+      <div class="progress" id="sys-progress" hidden><div class="bar"><i></i></div><span></span><button class="btn small" id="sys-cancel" data-i18n="Cancel">Cancel</button></div>
+      <div id="sys-summary" class="sys-summary"></div>
+      <ul class="modules" id="sys-modules"></ul>
+      <p class="note" data-i18n-html="sysnote">Reads ABS, airbag (SRS), transmission, steering, TPMS, climate, body and other modules with UDS (ISO 14229) over CAN. The deep scan probes every 11-bit address once (about a minute on Bluetooth) and remembers the modules it finds for this VIN. Module addresses and code meanings vary by manufacturer; vehicles without CAN (most pre-2008) only expose the engine.</p>
+    </section>
+  </main>
+
+  <!-- Service / reset functions -->
+  <main data-view-panel="service" hidden>
+    <section class="card span-all">
+      <div class="card-h"><h2 data-i18n="Service resets">Service resets</h2><span class="muted" id="svc-provider"></span></div>
+      <div class="services" id="services"></div>
+    </section>
+    <section class="card span-all">
+      <div class="card-h"><h2 data-i18n="Service history">Service history</h2><button class="btn small" id="svc-history-clear" data-i18n="Clear history">Clear history</button></div>
+      <ul class="history" id="svc-history"></ul>
+    </section>
+  </main>
+
+  <!-- Smog check / MOT readiness -->
+  <main data-view-panel="smog" hidden>
+    <section class="card span-all">
+      <div class="card-h"><h2 data-i18n="Emissions inspection readiness">Emissions inspection readiness</h2>
+        <label class="field"><span data-i18n="Rules">Rules</span><select id="smog-rules">
+          <option value="mot">UK MOT</option><option value="epa">US smog check (EPA OBD I/M)</option><option value="eu">EU periodic inspection (generic)</option></select></label>
+        <label class="field"><span data-i18n="Model year">Model year</span><input id="smog-year" class="input" type="number" min="1990" max="2035" style="width:90px"></label>
+        <label class="field" id="smog-diesel-f"><span data-i18n="Engine">Engine</span><select id="smog-fuel"><option value="auto">Auto</option><option value="petrol">Petrol</option><option value="diesel">Diesel</option></select></label>
+      </div>
+      <div id="smog-verdict" class="verdict"></div>
+      <ul class="checklist" id="smog-checks"></ul>
+    </section>
+    <section class="card span-all">
+      <div class="card-h"><h2 data-i18n="On-board monitor test results (Mode 06)">On-board monitor test results (Mode 06)</h2><button class="btn small" id="m06-run" data-i18n="Read test results">Read test results</button></div>
+      <div id="m06-misfire"></div>
+      <div id="m06"><p class="muted" data-i18n="Shows the ECU's own pass/fail results for the catalyst, O2 sensors, EVAP, EGR and misfire monitors, with the limits it uses. Available on CAN vehicles.">Shows the ECU's own pass/fail results for the catalyst, O2 sensors, EVAP, EGR and misfire monitors, with the limits it uses. Available on CAN vehicles.</p></div>
+    </section>
+  </main>
+
+  <!-- Vehicle information + diagnostic report -->
+  <main data-view-panel="report" hidden>
+    <section class="card">
+      <div class="card-h"><h2 data-i18n="Vehicle information">Vehicle information</h2></div>
+      <dl class="kv" id="vehicle-info"></dl>
+    </section>
+    <section class="card span-2">
+      <div class="card-h"><h2 data-i18n="Diagnostic report">Diagnostic report</h2>
+        <div class="btns"><button class="btn small" id="rep-refresh" data-i18n="Refresh">Refresh</button><button class="btn small" id="rep-print" data-i18n="Print / PDF">Print / PDF</button><button class="btn small primary" id="rep-download" data-i18n="Download">Download</button></div></div>
+      <div id="report" class="report"></div>
+    </section>
+  </main>
+
+  <dialog id="confirm-dialog">
+    <form method="dialog">
+      <h3 id="confirm-title"></h3>
+      <div id="confirm-body"></div>
+      <div class="btns end"><button value="cancel" class="btn" data-i18n="Cancel">Cancel</button><button value="ok" class="btn danger" id="confirm-ok">OK</button></div>
+    </form>
+  </dialog>
 
   <dialog id="clear-dialog">
     <form method="dialog">
@@ -115,11 +210,18 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <script src="js/obd.js?v=4"></script>
-  <script src="js/dtc-db.js?v=4"></script>
-  <script src="js/elm.js?v=4"></script>
-  <script src="js/sim.js?v=4"></script>
-  <script src="js/charts.js?v=4"></script>
-  <script src="js/app.js?v=4"></script>
+  <script src="js/obd.js?v=5"></script>
+  <script src="js/vin.js?v=5"></script>
+  <script src="js/dtc-db.js?v=5"></script>
+  <script src="js/elm.js?v=5"></script>
+  <script src="js/sim.js?v=5"></script>
+  <script src="js/charts.js?v=5"></script>
+  <script src="js/i18n.js?v=5"></script>
+  <script src="js/app.js?v=5"></script>
+  <script src="js/livedata.js?v=5"></script>
+  <script src="js/systems.js?v=5"></script>
+  <script src="js/services.js?v=5"></script>
+  <script src="js/smog.js?v=5"></script>
+  <script src="js/report.js?v=5"></script>
 </body>
 </html>

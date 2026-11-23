@@ -12,11 +12,11 @@
     dist:     { metric: ['km', (v) => v],   imperial: ['mi', (v) => v * 0.621371] },
     pressure: { metric: ['kPa', (v) => v],  imperial: ['psi', (v) => v * 0.145038] },
     lph:      { metric: ['L/h', (v) => v],  imperial: ['gal/h', (v) => v * 0.264172] },
-    flow: ['g/s'], pct: ['%'], trim: ['%'], rpm: ['rpm'], volt: ['V'], deg: ['° BTDC'], count: [''], sec: [''],
+    flow: ['g/s'], pct: ['%'], trim: ['%'], rpm: ['rpm'], volt: ['V'], deg: ['° BTDC'], count: [''], sec: [''], ratio: ['λ'], min: ['min'], enum: [''],
   };
   const unitOf = (kind) => { const u = UNIT[kind]; return Array.isArray(u) ? u[0] : u[units][0]; };
   const conv = (kind) => (v) => { const u = UNIT[kind]; return Array.isArray(u) ? v : u[units][1](v); };
-  const DIGITS = { volt: 2, trim: 1, flow: 1, lph: 1, deg: 1, pressure: 0 };
+  const DIGITS = { volt: 2, trim: 1, flow: 1, lph: 1, deg: 1, pressure: 0, ratio: 3 };
   function fmt(kind, v, withUnit = true) {
     if (v == null || isNaN(v)) return '—';
     if (kind === 'sec') { const h = Math.floor(v / 3600), m = Math.floor(v / 60) % 60, s = Math.floor(v % 60); return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`; }
@@ -73,7 +73,8 @@
   const TRIMS = ['stft1', 'ltft1', 'stft2', 'ltft2'];
   const FREEZE_PIDS = ['0C', '0D', '05', '04', '11', '0B', '10', '0F', '06', '07', '08', '09', '42'];
   const FAST = ['0C', '0D', '05', '04', '11', '06', '07', '14', '15', '10', '0B', '0E', '42'];
-  const SLOW = ['08', '09', '0F', '0A', '1F', '21', '2F', '30', '31', '33', '46', '5C', '5E'];
+  const SLOW = ['08', '09', '0F', '0A', '1F', '21', '2F', '30', '31', '33', '46', '5C', '5E', '03', '2C', '2E', '3C', '43', '44', '45', '49', '4C', '4D', '4E'];
+  const ONCE = ['1C', '51'];
 
   let gauges = [], charts = [];
   const color = (i) => getComputedStyle(document.documentElement).getPropertyValue(`--series-${i + 1}`).trim();
@@ -291,6 +292,11 @@
       const idle = (latest.speed || 0) < 1 && (latest.rpm || 0) < 1100;
       return { level: 'info', html: `MAF ${fmt('flow', latest.maf)} at ${fmt('rpm', latest.rpm)}. ${idle ? 'At warm idle, expect roughly 1–1.5 g/s per litre of engine size (e.g. 2.0 L ≈ 2–3 g/s). Much lower suggests a dirty sensor or an air leak after it.' : 'Check at warm idle for the most reliable comparison.'}` };
     },
+    dpf() {
+      const fuelType = OBD.enumText('51', latest.fuelType);
+      const t = latest.catTemp != null ? ` Exhaust/catalyst temperature ${fmt('temp', latest.catTemp)}.` : '';
+      return { level: 'info', html: `${fuelType ? 'Fuel type: ' + fuelType + '.' : ''}${t} Soot load is manufacturer data; use <b>Service functions → DPF regeneration</b> to check it and start a forced regeneration where supported.` };
+    },
     evap() {
       return { level: 'info', html: 'EVAP faults cannot be seen in live data. Check the fuel cap first, then smoke-test the system.' };
     },
@@ -365,6 +371,32 @@
 
   function renderAll() { renderLive(); renderDiag(); }
 
+  // ---------- Shared context for the feature modules (live data, system scan, services, smog, report) ----------
+  const listeners = {};
+  OBD.on = (ev, fn) => (listeners[ev] = listeners[ev] || []).push(fn);
+  const emit = (ev, arg) => (listeners[ev] || []).forEach((fn) => { try { fn(arg); } catch (e) { console.error(e); } });
+  // While a feature has exclusive use of the adapter (it changes CAN headers), the poll loop waits at the gate.
+  let gate = null;
+  const waitGate = async () => { while (gate) await gate; };
+  async function exclusive(label, fn) {
+    if (!client || !connected) throw new Error('Not connected');
+    if (gate) throw new Error('Busy: ' + gate.label);
+    let open;
+    gate = new Promise((r) => (open = r)); gate.label = label; emit('gate', label);
+    try { await client.queue; return await fn(client); }
+    finally { const g = gate; gate = null; open(); if (g) emit('gate', null); }
+  }
+  const extraFast = new Set(); // PIDs the live-data view wants refreshed every cycle
+  OBD.ctx = {
+    get client() { return client; }, get connected() { return connected; }, get latest() { return latest; }, get history() { return history; },
+    get diag() { return diag; }, get units() { return units; }, get busy() { return gate && gate.label; }, get transport() { return transport; },
+    get vin() { return vehicle.vin; }, get vehicle() { return vehicle; }, get csvRows() { return csvRows; },
+    fmt, unitOf, conv, statusFor, toast, exclusive, emit, extraFast, running, color, esc: (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])),
+    statusHtml: (level, text) => OBD.statusHtml(st(level, text)), refreshDiagnostics: () => refreshDiagnostics(), exportCsv: () => exportCsv(),
+  };
+  let vehicle = {}, connState = 'idle';
+  OBD.emitLang = () => { $('connect').textContent = OBD.t(connState === 'idle' ? 'Connect' : connState === 'connecting' ? 'Connecting…' : 'Disconnect'); emit('lang'); };
+
   // ---------- Data acquisition ----------
   function record(key, v) {
     if (v == null || isNaN(v)) return;
@@ -376,6 +408,7 @@
   }
 
   async function refreshDiagnostics() {
+    await waitGate();
     const [monitors, dtcs] = [await client.readMonitorStatus(), await client.readDtcs()];
     let freeze = null;
     if (dtcs.stored.length) {
@@ -388,6 +421,7 @@
     }
     diag = { monitors, dtcs, freeze };
     renderDiag();
+    emit('diag', diag);
   }
 
   async function pollLoop(token) {
@@ -395,11 +429,14 @@
     while (connected && token === loopToken) {
       const started = performance.now();
       try {
-        for (const pid of FAST) if (client.has(pid)) record(PIDS[pid].key, await client.readPid(pid));
+        const fast = [...new Set([...FAST, ...extraFast])];
+        for (const pid of fast) if (client.has(pid)) { await waitGate(); if (token !== loopToken) return; record(PIDS[pid].key, await client.readPid(pid)); }
         if (cycle % 5 === 0) {
-          for (const pid of SLOW) if (client.has(pid)) record(PIDS[pid].key, await client.readPid(pid));
+          for (const pid of SLOW) if (client.has(pid) && !extraFast.has(pid)) { await waitGate(); if (token !== loopToken) return; record(PIDS[pid].key, await client.readPid(pid)); }
+          await waitGate();
           if (!client.has('42')) record('voltage', await client.readBatteryVoltage());
         }
+        await waitGate();
         if (!client.ecuOk && cycle % 8 === 4 && await client.retryEcu()) {
           $('protocol').textContent = client.protocol; $('pidcount').textContent = client.supported.size;
           localStorage.setItem('obd-proto-' + (transport.name || 'ble'), client.protocolNum);
@@ -409,6 +446,7 @@
         csvRows.push({ time: new Date().toISOString(), ...latest });
         if (csvRows.length > 20000) csvRows.shift();
         renderLive();
+        emit('live');
       } catch (e) {
         if (!connected || token !== loopToken) return;
         console.error(e); toast('Read error: ' + e.message);
@@ -422,7 +460,8 @@
     const p = $('conn-sub');
     p.className = state === 'live' ? 'live' : '';
     p.innerHTML = `<span class="dot"></span>${sub}`;
-    $('connect').textContent = state === 'idle' ? 'Connect' : state === 'connecting' ? 'Connecting…' : 'Disconnect';
+    connState = state;
+    $('connect').textContent = OBD.t(state === 'idle' ? 'Connect' : state === 'connecting' ? 'Connecting…' : 'Disconnect');
     $('connect').disabled = state === 'connecting';
     $('source').disabled = state !== 'idle';
   }
@@ -445,8 +484,14 @@
       $('adapter').textContent = `${info.adapter}${src === 'ble' ? ' · ' + transport.name : ''}`;
       $('protocol').textContent = info.protocol;
       $('pidcount').textContent = client.supported.size;
-      $('vin').textContent = (await client.readVin()) || 'Not reported';
+      const vin = await client.readVin();
+      vehicle = { vin, info: OBD.decodeVinInfo(vin), source: src };
+      $('vin').textContent = vin || 'Not reported';
+      $('vin').title = vehicle.info && vehicle.info.make ? `${vehicle.info.make}${vehicle.info.year ? ' · ' + vehicle.info.year : ''}` : '';
       latest = {}; history = {}; csvRows = [];
+      for (const pid of ONCE) if (client.has(pid)) record(PIDS[pid].key, await client.readPid(pid));
+      vehicle.ecuInfo = client.ecuOk ? await client.readVehicleInfo() : null;
+      $('make').textContent = vehicle.info && !vehicle.info.invalid ? [vehicle.info.make || 'Unknown make (' + vehicle.info.region + ')', vehicle.info.year].filter(Boolean).join(' · ') : '—';
       connected = true; connectedAt = performance.now();
       if (transport.info) log('rx', 'BLE ' + transport.info);
       if (!client.ecuOk) toast('Vehicle ECU did not respond - is the ignition on?');
@@ -455,6 +500,7 @@
       setConn('live', `Live · ${src === 'sim' ? 'Simulator' : transport.name}`);
       await refreshDiagnostics();
       pollLoop(++loopToken);
+      emit('connected', vehicle);
     } catch (e) {
       console.error(e);
       toast(e.message || String(e));
@@ -470,6 +516,7 @@
     transport = null;
     setConn('idle', 'Disconnected');
     renderAll();
+    emit('disconnected');
   }
 
   // ---------- Log / toast / export ----------
@@ -517,11 +564,13 @@
       units = b.dataset.units; localStorage.setItem('obd-units', units);
       document.querySelectorAll('[data-units]').forEach((x) => x.classList.toggle('on', x === b));
       buildUi();
+      emit('units');
     });
     $('theme').onclick = () => {
       const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
       document.documentElement.dataset.theme = t; localStorage.setItem('obd-theme', t);
       buildUi();
+      emit('units');
     };
     $('dtc-tabs').onclick = (e) => {
       const b = e.target.closest('[data-tab]'); if (!b) return;
@@ -530,9 +579,10 @@
       renderDtcList(true);
     };
     $('scan').onclick = () => (client && connected ? refreshDiagnostics().then(() => toast('Codes re-scanned')) : toast('Not connected'));
-    $('clear').onclick = () => (client && connected ? $('clear-dialog').showModal() : toast('Not connected'));
+    $('clear').onclick = () => (!client || !connected ? toast('Not connected') : gate ? toast('Busy: ' + gate.label) : $('clear-dialog').showModal());
     $('clear-dialog').addEventListener('close', async () => {
       if ($('clear-dialog').returnValue !== 'ok') return;
+      await waitGate();
       const ok = await client.clearDtcs();
       toast(ok ? 'Codes cleared, monitors reset' : 'ECU did not confirm the clear');
       await refreshDiagnostics();
@@ -545,7 +595,16 @@
       catch { $('log').textContent = text; getSelection().selectAllChildren($('log')); toast('Select-all done - copy with Ctrl/Cmd+C'); }
     };
     $('log').closest('details').addEventListener('toggle', () => { $('log').textContent = logLines.join('\n'); });
-    let rT; addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(renderLive, 100); });
+    let rT; addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => { renderLive(); emit('resize'); }, 100); });
+    const showView = (v) => {
+      document.querySelectorAll('[data-view-panel]').forEach((p) => { p.hidden = p.dataset.viewPanel !== v; });
+      document.querySelectorAll('#views [data-view]').forEach((b) => b.setAttribute('aria-selected', b.dataset.view === v));
+      localStorage.setItem('obd-view', v);
+      requestAnimationFrame(() => { renderLive(); emit('view', v); });
+    };
+    $('views').onclick = (e) => { const b = e.target.closest('[data-view]'); if (b) showView(b.dataset.view); };
+    showView(localStorage.getItem('obd-view') || 'dash');
+    emit('init');
 
     if ($('source').value === 'sim') connect(); // demo data straight away; Bluetooth needs a tap (browser rule)
     else toast('Tap Connect to pair with your Bluetooth adapter');

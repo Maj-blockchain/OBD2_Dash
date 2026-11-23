@@ -188,6 +188,102 @@
       const m = (OBD.cleanLines(await this.cmd('ATRV'))[0] || '').match(/([\d.]+)/);
       return m ? parseFloat(m[1]) : null;
     }
+    // ---------- Mode 09 vehicle information ----------
+    async readVehicleInfo() {
+      const safe = async (fn) => { try { return await fn(); } catch { return null; } };
+      return {
+        calid: await safe(async () => OBD.decodeInfoStrings(await this.cmd('0904', 8000), '04', 16)),
+        cvn: await safe(async () => OBD.decodeCvn(await this.cmd('0906', 8000))),
+        ecuName: await safe(async () => OBD.decodeInfoStrings(await this.cmd('090A', 8000), '0A', 20)),
+      };
+    }
+
+    // ---------- Mode 06 on-board monitor test results (CAN only) ----------
+    async readMode06(onProgress = () => {}) {
+      const mids = [];
+      for (const base of ['00', '20', '40', '60', '80', 'A0']) {
+        const d = OBD.after(OBD.payload(await this.cmd('06' + base)), '46' + base);
+        if (!d || d.length < 4) break;
+        for (let i = 0; i < 31; i++) if (d[i >> 3] & (0x80 >> (i & 7))) mids.push(parseInt(base, 16) + i + 1);
+        if (!(d[3] & 1)) break; // bit 32 = next range supported
+      }
+      const results = [];
+      for (let i = 0; i < mids.length; i++) {
+        onProgress(i + 1, mids.length);
+        const r = OBD.decodeMode06(await this.cmd('06' + mids[i].toString(16).toUpperCase().padStart(2, '0'), 8000));
+        if (r) results.push(...r);
+      }
+      return { mids, results };
+    }
+
+    // ---------- Full system scan: UDS (ISO 14229) over ISO-TP to each module ----------
+    isCan() { return /^[6-9]$/.test(this.protocolNum || ''); }
+
+    /** Points the adapter at one module (11-bit request id; reply id = request + 8). */
+    async target(tx) {
+      const rx = (parseInt(tx, 16) + 8).toString(16).toUpperCase();
+      await this.cmd('ATSH' + tx);
+      await this.cmd('ATCRA' + rx);
+    }
+    /** Back to normal OBD-II functional addressing. */
+    async untarget() { await this.cmd('ATCRA'); await this.cmd('ATSH7DF'); await this.cmd('ATST32'); await this.cmd('ATH0'); }
+
+    /** Every ECU answering the legislated OBD request (7E8..7EF). */
+    async discoverObdEcus() {
+      await this.cmd('ATH1');
+      const lines = OBD.cleanLines(await this.cmd('0100', 8000));
+      await this.cmd('ATH0');
+      const ids = new Set();
+      for (const l of lines) { const m = l.replace(/\s/g, '').match(/^(7E[8-F])/i); if (m) ids.add((parseInt(m[1], 16) - 8).toString(16).toUpperCase()); }
+      return [...ids];
+    }
+
+    /** Sends TesterPresent (3E 00) to every 11-bit physical address 700-7DF. Slow (~1 min on BLE). */
+    async probeAddresses(onProgress = () => {}, isCancelled = () => false) {
+      const found = [];
+      await this.cmd('ATST19'); // ~100 ms timeout per silent address
+      await this.cmd('ATH1');
+      await this.cmd('ATCRA');
+      for (let id = 0x700; id < 0x7E0; id++) {
+        if (isCancelled()) break;
+        if (id === 0x7DF) continue;
+        const tx = id.toString(16).toUpperCase();
+        onProgress(id - 0x700 + 1, 0xE0, tx);
+        await this.cmd('ATSH' + tx);
+        const lines = OBD.cleanLines(await this.cmd('3E00', 1500));
+        const rx = (id + 8).toString(16).toUpperCase();
+        if (lines.some((l) => l.replace(/\s/g, '').toUpperCase().startsWith(rx) && /7E00|7F3E/i.test(l.replace(/\s/g, '')))) found.push(tx);
+      }
+      await this.untarget();
+      return found;
+    }
+
+    /** Reads identification and trouble codes from one module (UDS). */
+    async readModule(tx) {
+      await this.target(tx);
+      const alive = OBD.cleanLines(await this.cmd('3E00', 3000)).some((l) => /^7E\s*00|^7F\s*3E/i.test(l));
+      const name = OBD.decodeUdsString(await this.cmd('22F197', 4000), 'F197');
+      const part = OBD.decodeUdsString(await this.cmd('22F187', 4000), 'F187');
+      const sw = OBD.decodeUdsString(await this.cmd('22F195', 4000), 'F195');
+      let dtcs = OBD.decodeUdsDtcs(await this.cmd('1902FF', 8000));
+      if (dtcs && dtcs.negative) dtcs = OBD.decodeUdsDtcs(await this.cmd('19020D', 8000)); // some modules reject mask FF
+      return { tx, alive: alive || !!name || Array.isArray(dtcs), name, part, sw, dtcs: Array.isArray(dtcs) ? dtcs : null };
+    }
+
+    /** UDS ClearDiagnosticInformation (14 FF FF FF) on one module. */
+    async clearModule(tx) {
+      await this.target(tx);
+      const ok = /^54/.test(OBD.payload(await this.cmd('14FFFFFF', 8000)) || '');
+      return ok;
+    }
+
+    /** UDS RoutineControl on a module: sub 01 start, 03 results. Returns the response payload hex or null. */
+    async routine(tx, sub, rid, data = '') {
+      await this.target(tx);
+      const p = OBD.payload(await this.cmd('31' + sub + rid + data, 8000));
+      return p && p.startsWith('71') ? p : null;
+    }
+
     disconnect() { return this.t.disconnect(); }
   }
 
