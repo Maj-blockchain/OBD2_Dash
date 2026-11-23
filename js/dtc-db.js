@@ -304,6 +304,30 @@
     steps: ['Check the ABS fuses and relays.', 'Inspect the ABS module connector for corrosion.', 'Check the CAN wiring to the module.', 'Repair or replace the module (often a rebuild service exists).'],
     note: 'ABS may be disabled: normal brakes still work, but drive carefully.' });
 
+  add('P2463', { title: 'Diesel particulate filter restriction: soot accumulation', severity: 'serious', drive: 'soon', diy: 'Moderate', live: 'dpf',
+    meaning: 'The particulate filter (DPF) is holding more soot than the ECU allows. Normal regeneration has not been able to burn it off, usually because of many short trips.',
+    symptoms: ['DPF warning light', 'Loss of power or limp mode', 'Fan running after switch-off', 'Higher fuel consumption'],
+    causes: ['Mostly short, low-speed journeys (regeneration never completes)', 'Faulty DPF differential pressure sensor or its hoses', 'EGR or injector fault producing excess soot', 'Incorrect engine oil (not low-SAPS) blocking the filter with ash'],
+    steps: ['Fix any other engine codes first (EGR, injectors, sensors), or regeneration will fail again.', 'Check the DPF pressure sensor hoses for splits or blockage.', 'Drive at a steady 2,500+ rpm for 20 minutes on a fast road, or run a forced regeneration with a scan tool (Service functions → DPF regeneration).', 'If soot load stays high after regeneration, the filter may need cleaning or replacement (ash load).'],
+    note: 'Do not keep driving in limp mode for long: a heavily loaded DPF can overheat during regeneration.' });
+  add('C0035', { title: 'Left front wheel speed sensor circuit', severity: 'serious', drive: 'soon', diy: 'Easy – moderate',
+    meaning: 'The ABS module is not getting a valid signal from the left front wheel speed sensor.',
+    symptoms: ['ABS, traction and stability lights on', 'ABS and ESP disabled', 'Speedometer may misread on some cars'],
+    causes: ['Damaged sensor wiring near the hub (flexes with the suspension)', 'Failed sensor', 'Dirty or cracked reluctor ring / magnetic wheel bearing encoder', 'Corroded connector'],
+    steps: ['Inspect the sensor wiring from the hub to the body connector for chafing.', 'Clean the sensor tip and check the air gap to the reluctor ring.', 'Measure the sensor resistance or check its signal while spinning the wheel.', 'Replace the sensor or wheel bearing (if the encoder is in the bearing), then clear codes and test drive.'],
+    note: 'Normal braking still works, but without ABS the wheels can lock in an emergency stop.' });
+  add('B0001', { title: 'Driver frontal airbag stage 1 deployment control', severity: 'critical', drive: 'soon', diy: 'Advanced',
+    meaning: 'The airbag module has found a fault in the driver front airbag circuit (usually resistance out of range). The airbag may not deploy in a crash.',
+    symptoms: ['Airbag (SRS) warning light on'],
+    causes: ['Failed clock spring (spiral cable) behind the steering wheel', 'Loose or corroded airbag connector', 'Damaged wiring in the steering column', 'Faulty airbag unit'],
+    steps: ['Disconnect the battery and wait at least 10 minutes before touching any airbag part.', 'Check the connectors under the steering wheel and at the clock spring.', 'Test or replace the clock spring (common cause if the horn or wheel buttons also fail).', 'Clear the code with a scan tool that reads the SRS module and confirm the light goes out.'],
+    note: 'Airbag work is a safety-critical job: if unsure, have a specialist do it. A lit SRS light is an MOT failure in the UK.' });
+  add('U0140', { title: 'Lost communication with body control module', severity: 'warning', drive: 'ok', diy: 'Moderate – advanced',
+    meaning: 'A module stopped hearing from the body control module (BCM) at some point. Stored network codes are often caused by a flat battery or jump-start.',
+    symptoms: ['Intermittent electrical faults (lights, locks, wipers)', 'Often no symptom if it was a one-off'],
+    causes: ['Low battery voltage or a recent jump-start', 'BCM fuse or ground fault', 'CAN wiring or connector fault', 'Failed BCM'],
+    steps: ['Check the battery and charging voltage.', 'Clear the code and see if it returns.', 'If it returns, check the BCM fuses, grounds and CAN wiring.'] });
+
   // ---------- Fallbacks for codes not in the list ----------
   const GROUPS = { P: 'Powertrain', C: 'Chassis', B: 'Body', U: 'Network' };
   const P_SUBSYSTEMS = {
